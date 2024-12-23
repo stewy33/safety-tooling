@@ -2,12 +2,10 @@ import re
 
 import jinja2
 
-from safetytooling.utils.utils import get_repo_root
-
 _GLOBAL_PROMPT_JINJA_ENV = None
 
 
-def get_prompt_jinja_env() -> jinja2.Environment:
+def get_prompt_jinja_env(prompt_dir: str = "./prompts") -> jinja2.Environment:
     """
     Returns a jinja2 environment for the prompts folder.
     A single global instance is used because creating a new environment for
@@ -18,7 +16,7 @@ def get_prompt_jinja_env() -> jinja2.Environment:
         return _GLOBAL_PROMPT_JINJA_ENV
 
     _GLOBAL_PROMPT_JINJA_ENV = jinja2.Environment(
-        loader=jinja2.FileSystemLoader(get_repo_root() / "prompts"),
+        loader=jinja2.FileSystemLoader(prompt_dir),
         # jinja2.StrictUndefined raises an error if a variable in the template
         # is not specified when rendering.
         undefined=jinja2.StrictUndefined,

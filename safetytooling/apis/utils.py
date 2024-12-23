@@ -1,6 +1,6 @@
 from typing import Iterable
 
-import safetytoolingutils.math_utils
+import safetytooling.utils.math_utils
 
 from safetytooling.data_models.inference import LLMResponse
 
@@ -31,8 +31,8 @@ def binary_response_logit(
     logprobs_1 = [final_logprobs[t] for t in final_tokens if t.strip() in tokens1]
     logprobs_2 = [final_logprobs[t] for t in final_tokens if t.strip() in tokens2]
 
-    logprob_1 = safetytoolingutils.math_utils.logsumexp(logprobs_1)
-    logprob_2 = safetytoolingutils.math_utils.logsumexp(logprobs_2)
+    logprob_1 = safetytooling.utils.math_utils.logsumexp(logprobs_1)
+    logprob_2 = safetytooling.utils.math_utils.logsumexp(logprobs_2)
 
     return logprob_1 - logprob_2
 
@@ -59,7 +59,7 @@ def get_combined_logprobs(
     logprobs_1 = [final_logprobs[t] for t in final_tokens if t.strip() in tokens1]
     logprobs_2 = [final_logprobs[t] for t in final_tokens if t.strip() in tokens2]
 
-    logprob_1 = safetytoolingutils.math_utils.logsumexp(logprobs_1)
-    logprob_2 = safetytoolingutils.math_utils.logsumexp(logprobs_2)
+    logprob_1 = safetytooling.utils.math_utils.logsumexp(logprobs_1)
+    logprob_2 = safetytooling.utils.math_utils.logsumexp(logprobs_2)
 
     return logprob_1, logprob_2
