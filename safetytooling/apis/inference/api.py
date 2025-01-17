@@ -221,7 +221,7 @@ class InferenceAPI:
     def model_id_to_class(self, model_id: str, gemini_use_vertexai: bool = False) -> InferenceAPIModel:
         if model_id in COMPLETION_MODELS:
             return self._openai_completion
-        elif model_id in GPT_CHAT_MODELS or "ft:gpt-3.5-turbo" in model_id:
+        elif model_id in GPT_CHAT_MODELS or model_id.startswith("ft:gpt"):
             return self._openai_chat
         elif model_id in ANTHROPIC_MODELS:
             return self._anthropic_chat
@@ -237,7 +237,7 @@ class InferenceAPI:
             return class_for_model
         elif model_id in S2S_MODELS:
             return self._openai_s2s
-        elif model_id in TOGETHER_MODELS:
+        elif model_id in TOGETHER_MODELS or model_id.startswith("scalesafetyresearch"):
             return self._together
         raise ValueError(f"Invalid model id: {model_id}")
 
@@ -312,6 +312,7 @@ class InferenceAPI:
         is_valid: Callable[[str], bool] = lambda _: True,
         insufficient_valids_behaviour: Literal["error", "continue", "pad_invalids", "retry"] = "retry",
         gemini_use_vertexai: bool = False,
+        use_cache: bool = True,
         **kwargs,
     ) -> list[LLMResponse]:
         """
@@ -374,7 +375,7 @@ class InferenceAPI:
         )
         cached_responses, cached_results, failed_cache_responses = [], [], []
 
-        if self.cache_manager is not None:
+        if self.cache_manager is not None and use_cache:
             cached_responses, cached_results, failed_cache_responses = self.cache_manager.process_cached_responses(
                 prompt=prompt,
                 params=llm_cache_params,
@@ -464,7 +465,7 @@ class InferenceAPI:
 
             # Update candidate_responses to include responses from cache
             candidate_iter = iter(candidate_responses)
-            if self.cache_manager is not None:
+            if self.cache_manager is not None and use_cache:
                 candidate_responses = [
                     next(candidate_iter) if response is None else response for response in cached_responses
                 ]
