@@ -82,9 +82,12 @@ class InferenceAPI:
         use_redis: bool = False,
         empty_completion_threshold: int = 0,
         use_gpu_models: bool = False,
+        anthropic_api_key: str | None = None,
+        openai_api_key: str | None = None,
         print_prompt_and_response: bool = False,
         use_vllm_if_model_not_found: bool = False,
         vllm_base_url: str = "http://localhost:8000/v1/chat/completions",
+        no_cache: bool = False,
     ):
         """
         Set prompt_history_dir to None to disable saving prompt history.
@@ -120,7 +123,7 @@ class InferenceAPI:
         self.use_vllm_if_model_not_found = use_vllm_if_model_not_found
         self.vllm_base_url = vllm_base_url
         # can also set via env var
-        if os.environ.get("SAFETYTOOLING_PRINT_PROMPTS", "").lower() == "true":
+        if os.environ.get("SAFETYTOOLING_PRINT_PROMPTS", "false").lower() == "true":
             self.print_prompt_and_response = True
         secrets = load_secrets("SECRETS")
         if prompt_history_dir == "default":
@@ -150,12 +153,14 @@ class InferenceAPI:
             frac_rate_limit=self.openai_fraction_rate_limit,
             prompt_history_dir=self.prompt_history_dir,
             base_url=self.openai_base_url,
+            openai_api_key=openai_api_key,
         )
 
         self._openai_chat = OpenAIChatModel(
             frac_rate_limit=self.openai_fraction_rate_limit,
             prompt_history_dir=self.prompt_history_dir,
             base_url=self.openai_base_url,
+            openai_api_key=openai_api_key,
         )
 
         self._openai_moderation = OpenAIModerationModel()
@@ -166,6 +171,7 @@ class InferenceAPI:
         self._anthropic_chat = AnthropicChatModel(
             num_threads=self.anthropic_num_threads,
             prompt_history_dir=self.prompt_history_dir,
+            anthropic_api_key=anthropic_api_key,
         )
 
         self._huggingface = HuggingFaceModel(
@@ -223,6 +229,9 @@ class InferenceAPI:
         self.running_cost: float = 0
         self.model_timings = {}
         self.model_wait_times = {}
+
+        # Check NO_CACHE environment variable
+        self.no_cache = no_cache or os.environ.get("NO_CACHE", "false").lower() == "true"
 
     def semaphore_method_decorator(func):
         # unused but could be useful to debug if openai jamming comes back
@@ -377,6 +386,8 @@ class InferenceAPI:
                 - pad_invalids: pad the list with invalid responses up to n
                 - retry: retry the API call until n valid responses are found
         """
+        if self.no_cache:
+            use_cache = False
 
         # trick to double rate limit for most recent model only
         if isinstance(model_ids, str):

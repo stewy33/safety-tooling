@@ -36,10 +36,15 @@ class AnthropicChatModel(InferenceAPIModel):
         self,
         num_threads: int,
         prompt_history_dir: Path | None = None,
+        anthropic_api_key: str | None = None,
     ):
         self.num_threads = num_threads
         self.prompt_history_dir = prompt_history_dir
-        self.aclient = AsyncAnthropic()  # Assuming AsyncAnthropic has a default constructor
+        if anthropic_api_key:
+            self.aclient = AsyncAnthropic(api_key=anthropic_api_key)
+        else:
+            self.aclient = AsyncAnthropic()
+
         self.available_requests = asyncio.BoundedSemaphore(int(self.num_threads))
         self.allowed_kwargs = {"temperature", "max_tokens"}
 
@@ -166,8 +171,11 @@ class AnthropicChatModel(InferenceAPIModel):
 
 
 class AnthropicModelBatch:
-    def __init__(self):
-        self.client = anthropic.Anthropic()
+    def __init__(self, anthropic_api_key: str | None = None):
+        if anthropic_api_key:
+            self.client = anthropic.Anthropic(api_key=anthropic_api_key)
+        else:
+            self.client = anthropic.Anthropic()
 
     def create_message_batch(self, requests: list[dict]) -> dict:
         """Create a batch of messages."""
@@ -185,6 +193,7 @@ class AnthropicModelBatch:
             if message_batch.processing_status == "ended":
                 return message_batch
             LOGGER.debug(f"Batch {batch_id} is still processing...")
+            print(f"Batch {batch_id} is still processing...")
             await asyncio.sleep(60)
 
     def list_message_batches(self, limit: int = 20) -> list[dict]:
@@ -199,17 +208,24 @@ class AnthropicModelBatch:
         """Cancel a message batch."""
         return self.client.messages.batches.cancel(batch_id)
 
-    def prompts_to_requests(self, model_id: tuple[str, ...], prompts: list[Prompt], **kwargs) -> list[Request]:
+    def get_custom_id(self, index: int, prompt: Prompt) -> str:
+        """Generate a custom ID for a batch request using index and prompt hash."""
+        hash_str = prompt.model_hash()
+        return f"{index}_{hash_str}"
+
+    def prompts_to_requests(
+        self, model_id: tuple[str, ...], prompts: list[Prompt], max_tokens: int, **kwargs
+    ) -> list[Request]:
         requests = []
         for i, prompt in enumerate(prompts):
             sys_prompt, chat_messages = prompt.anthropic_format()
-            hash_str = prompt.model_hash()
             requests.append(
                 Request(
-                    custom_id=f"{i}_{hash_str}",
+                    custom_id=self.get_custom_id(i, prompt),
                     params=MessageCreateParamsNonStreaming(
                         model=model_id,
                         messages=chat_messages,
+                        max_tokens=max_tokens,
                         **(dict(system=sys_prompt) if sys_prompt else {}),
                         **kwargs,
                     ),
@@ -221,12 +237,18 @@ class AnthropicModelBatch:
         self,
         model_id: str,
         prompts: list[Prompt],
+        max_tokens: int,
         log_dir: Path | None = None,
         **kwargs,
     ) -> tuple[list[LLMResponse], str]:
+        assert max_tokens is not None, "Anthropic batch API requires max_tokens to be specified"
         start = time.time()
 
-        requests = self.prompts_to_requests(model_id, prompts, **kwargs)
+        custom_ids = [self.get_custom_id(i, prompt) for i, prompt in enumerate(prompts)]
+        set_custom_ids = set(custom_ids)
+        assert len(set_custom_ids) == len(custom_ids), "Duplicate custom IDs found"
+
+        requests = self.prompts_to_requests(model_id, prompts, max_tokens, **kwargs)
         batch_response = self.create_message_batch(requests=requests)
         batch_id = batch_response.id
         if log_dir is not None:
@@ -234,28 +256,33 @@ class AnthropicModelBatch:
             log_file.parent.mkdir(parents=True, exist_ok=True)
             with open(log_file, "w") as f:
                 json.dump(batch_response.model_dump(mode="json"), f)
-        print(f"Batch {batch_id} created with {len(requests)} requests")
+        print(f"Batch {batch_id} created with {len(prompts)} requests")
 
         _ = await self.poll_message_batch(batch_id)
 
         results = self.retrieve_message_batch_results(batch_id)
+        LOGGER.info(f"{results[0]=}")
 
-        responses = []
+        responses_dict = {}
         for result in results:
             if result.result.type == "succeeded":
                 content = result.result.message.content
                 # Extract text from content array
                 text = content[0].text if content else ""
-                responses.append(
-                    LLMResponse(
-                        model_id=model_id,
-                        completion=text,
-                        stop_reason=result.result.message.stop_reason,
-                        duration=None,  # Batch does not track individual durations
-                        api_duration=None,
-                        cost=0,
-                    )
+                assert result.custom_id in set_custom_ids
+                responses_dict[result.custom_id] = LLMResponse(
+                    model_id=model_id,
+                    completion=text,
+                    stop_reason=result.result.message.stop_reason,
+                    duration=None,  # Batch does not track individual durations
+                    api_duration=None,
+                    cost=0,
+                    batch_custom_id=result.custom_id,
                 )
+
+        responses = []
+        for custom_id in custom_ids:
+            responses.append(responses_dict[custom_id] if custom_id in responses_dict else None)
 
         duration = time.time() - start
         LOGGER.debug(f"Completed batch call in {duration}s")
