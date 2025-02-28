@@ -1,8 +1,9 @@
 import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Literal
+
+from dotenv import load_dotenv
 
 from safetytooling.apis.inference.anthropic import ANTHROPIC_MODELS, AnthropicModelBatch
 from safetytooling.apis.inference.cache_manager import get_cache_manager
@@ -12,6 +13,9 @@ from safetytooling.data_models import LLMParams, LLMResponse, Prompt
 from safetytooling.utils.utils import load_secrets
 
 LOGGER = logging.getLogger(__name__)
+
+
+load_dotenv()
 
 
 def chunk_prompts_for_anthropic(prompts: list[Prompt], chunk_size: int = 100_000) -> list[list[Prompt]]:
@@ -74,8 +78,8 @@ class BatchInferenceAPI:
         """
         secrets = load_secrets("SECRETS")
 
-        # Check NO_CACHE environment variable
-        self.no_cache = no_cache or os.environ.get("NO_CACHE", "false").lower() == "true"
+        # Check NO_CACHE in secrets
+        self.no_cache = no_cache or secrets.get("NO_CACHE", "false").lower() == "true"
 
         if log_dir == "default":
             if "PROMPT_HISTORY_DIR" in secrets:
@@ -95,9 +99,12 @@ class BatchInferenceAPI:
             assert isinstance(cache_dir, Path) or cache_dir is None
             self.cache_dir = cache_dir
 
+        # Check REDIS_CACHE in secrets
+        self.use_redis = use_redis or secrets.get("REDIS_CACHE", "false").lower() == "true"
         self.cache_manager = None
         if self.cache_dir is not None and not self.no_cache:
-            self.cache_manager = get_cache_manager(self.cache_dir, use_redis)
+            self.cache_manager = get_cache_manager(self.cache_dir, self.use_redis)
+            print(f"{self.cache_manager=}")
 
         self._anthropic_batch = AnthropicModelBatch(anthropic_api_key=anthropic_api_key)
         self._openai_batch = OpenAIModelBatch(openai_api_key=openai_api_key)
@@ -119,8 +126,8 @@ class BatchInferenceAPI:
             prompts: List of prompts to send to the model.
             log_dir: Directory to store logs. If None, will use prompt_history_dir.
             use_cache: Whether to use caching. Ignored if no_cache was set during initialization.
-            max_tokens: Maximum number of tokens to generate.
-            **kwargs: Additional arguments to pass to the model.
+            max_tokens: Maximum number of tokens to generate per prompt. Setting different max_tokens for each prompt is not yet supported here, although it is in principle supported in the underlying API.
+            **kwargs: Additional arguments to pass to the model. "seed" should be used for preventing cached responses from being used.
 
         Returns:
             Tuple of (list of responses, batch ID)
@@ -139,6 +146,7 @@ class BatchInferenceAPI:
 
         if model_id in ANTHROPIC_MODELS:
             assert max_tokens is not None, "max_tokens must be provided for Anthropic models"
+            kwargs["max_tokens"] = max_tokens
 
         llm_params = LLMParams(model=model_id, **kwargs)
         cached_responses = []
@@ -166,6 +174,7 @@ class BatchInferenceAPI:
         # If all prompts are cached, return cached responses
         if not uncached_prompts:
             return cached_responses, "cached"
+
         if chunk is None:
             if model_id in ANTHROPIC_MODELS:
                 chunk = 100_000
@@ -179,22 +188,30 @@ class BatchInferenceAPI:
         else:
             chunks = [uncached_prompts[i : i + chunk] for i in range(0, len(uncached_prompts), chunk)]
 
+        async def process_chunk(chunk_prompts) -> tuple[list[LLMResponse], str]:
+            print(f"Batch kwargs: {kwargs}")
+            if model_id in ANTHROPIC_MODELS:
+                return await self._anthropic_batch(
+                    model_id=model_id,
+                    prompts=chunk_prompts,
+                    max_tokens=kwargs.get("max_tokens", None),
+                    **{k: v for k, v in kwargs.items() if k != "seed" and k != "max_tokens"},
+                )
+            elif model_id in GPT_CHAT_MODELS:
+                return await self._openai_batch(
+                    model_id=model_id,
+                    prompts=chunk_prompts,
+                    log_dir=log_dir,
+                    max_tokens=kwargs.get("max_tokens", None),
+                    **{k: v for k, v in kwargs.items() if k != "max_tokens"},
+                )
+            else:
+                raise ValueError(f"Model {model_id} is not supported. Only Claude and OpenAI models are supported.")
+
         # Process uncached prompts in chunks if specified
         if len(chunks) > 1:
             all_responses = []
             all_batch_ids = []
-
-            async def process_chunk(chunk_prompts):
-                if model_id in ANTHROPIC_MODELS:
-                    return await self._anthropic_batch(
-                        model_id=model_id, prompts=chunk_prompts, max_tokens=max_tokens, **kwargs
-                    )
-                elif model_id in GPT_CHAT_MODELS:
-                    return await self._openai_batch(
-                        model_id=model_id, prompts=chunk_prompts, log_dir=log_dir, max_tokens=max_tokens, **kwargs
-                    )
-                else:
-                    raise ValueError(f"Model {model_id} is not supported. Only Claude and OpenAI models are supported.")
 
             results = await asyncio.gather(*[process_chunk(chunk) for chunk in chunks])
 
@@ -208,52 +225,30 @@ class BatchInferenceAPI:
                         if response is not None:
                             self.cache_manager.save_cache(prompt=prompt, params=llm_params, responses=[response])
 
-            # Merge cached and new responses
-            final_responses = [None] * len(prompts)
-            for cached_response, idx in zip(cached_responses, cached_indices):
-                final_responses[idx] = cached_response
-            for idx, response in zip(uncached_indices, all_responses):
-                final_responses[idx] = response
-
-            if use_cache:
-                print(
-                    f"{len(cached_responses)}/{len(prompts)} retrieved from cache, "
-                    f"{sum(response is None for response in final_responses)}/{len(prompts)} failed, "
-                    f"{sum(response is not None for response in final_responses)}/{len(prompts)} succeeded in batch API requests {all_batch_ids}"
-                )
-
-            return final_responses, ",".join(all_batch_ids)
         else:
             # Process all uncached prompts in a single batch
-            if model_id in ANTHROPIC_MODELS:
-                responses, batch_id = await self._anthropic_batch(
-                    model_id=model_id, prompts=uncached_prompts, max_tokens=max_tokens, **kwargs
-                )
-            elif model_id in GPT_CHAT_MODELS:
-                responses, batch_id = await self._openai_batch(
-                    model_id=model_id, prompts=uncached_prompts, log_dir=log_dir, max_tokens=max_tokens, **kwargs
-                )
-            else:
-                raise ValueError(f"Model {model_id} is not supported. Only Claude and OpenAI models are supported.")
+            responses, batch_id = await process_chunk(uncached_prompts)
+            all_responses = responses
+            all_batch_ids = [batch_id]
 
-            # Save responses to cache
-            if self.cache_manager is not None and use_cache:
-                for prompt, response in zip(uncached_prompts, responses):
-                    if response is not None:
-                        self.cache_manager.save_cache(prompt=prompt, params=llm_params, responses=[response])
+        # Save responses to cache
+        if self.cache_manager is not None and use_cache:
+            for prompt, response in zip(uncached_prompts, responses):
+                if response is not None:
+                    self.cache_manager.save_cache(prompt=prompt, params=llm_params, responses=[response])
 
-            # Merge cached and new responses
-            final_responses = [None] * len(prompts)
-            for cached_response, idx in zip(cached_responses, cached_indices):
-                final_responses[idx] = cached_response
-            for idx, response in zip(uncached_indices, responses):
-                final_responses[idx] = response
+        # Merge cached and new responses
+        final_responses = [None] * len(prompts)
+        for cached_response, idx in zip(cached_responses, cached_indices):
+            final_responses[idx] = cached_response
+        for idx, response in zip(uncached_indices, all_responses):
+            final_responses[idx] = response
 
-            if use_cache:
-                print(
-                    f"{len(cached_responses)}/{len(prompts)} retrieved from cache, "
-                    f"{sum(response is None for response in final_responses)}/{len(prompts)} failed, "
-                    f"{sum(response is not None for response in final_responses)}/{len(prompts)} succeeded in batch API request {batch_id}"
-                )
+        if use_cache:
+            print(
+                f"{len(cached_responses)}/{len(prompts)} retrieved from cache, "
+                f"{sum(response is None for response in final_responses)}/{len(prompts)} failed, "
+                f"{sum(response is not None for response in final_responses)}/{len(prompts)} succeeded in batch API requests {all_batch_ids}"
+            )
 
-            return final_responses, batch_id
+        return final_responses, ",".join(all_batch_ids)
