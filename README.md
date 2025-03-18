@@ -2,27 +2,78 @@
 
 - This is a repo designed to be shared across many AI Safety projects. It has built up since Summer 2023 during projects with Ethan Perez. The code primarily provides an LLM API with a common interface for OpenAI, Anthropic and Google models.
 - The aim is that this repo continues to grow and evolve as more collaborators start to use it, ultimately speeding up new AI Safety researchers that join the cohort in the future. Furthermore, it provides an opportunity for those who have less of a software engineering background to upskill in contributing to a larger codebase that has many users.
-- This repo is designed to be a git [submodule](https://git-scm.com/docs/git-submodule). This has the benefit of being able to use the code directly (without needing to install it) and having the ease of being able to commit changes that everyone can benefit from. When you `cd` into the submodule directory, you can `git pull` and `git push` to that repository.
-    - An example repo that uses `safety-tooling` as a submodule is provided and explained in the second section.
+- This repo works great as a git [submodule](https://git-scm.com/docs/git-submodule). This has the benefit of having the ease of being able to commit changes that everyone can benefit from. When you `cd` into the submodule directory, you can `git pull` and `git push` to that repository.
+    - We provide an example repo that uses `safety-tooling` as a submodule here: https://github.com/safety-research/safety-examples
+    - The code can also eaisly be pip installed if that is more suitable for your use case.
 
 ## Repository setup
 
-### Environment
+### Installation (from clone)
 
 To set up the development environment for this project,
 follow the steps below:
 
-1. First install `uv` if you haven't already.
+1. We recommend using `uv` to manage the python environment. Install it with the following command:
 ```
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.local/bin/env
+```
+
+2. Clone the repository and navigate to the directory.
+```
+git clone git@github.com:safety-research/safety-tooling.git
+cd safety-tooling
+```
+
+3. Install python 3.11 and create a virtual environment.
+```
 uv python install 3.11
 uv venv
 source .venv/bin/activate
+```
+
+3. Install the package in editable mode and also install the development dependencies.
+```
 uv pip install -e .
 uv pip install -r requirements_dev.txt
-python -m ipykernel install --user --name=venv # so it shows up in jupyter notebooks within vscode
 ```
+
+4. Install the kernel in vscode so it can be used in jupyter notebooks (optional).
+```
+python -m ipykernel install --user --name=venv
+```
+
+### Installation (directly from pip)
+
+If you don't expect to make any changes to the package (not recommended when actively doing research), you can install it directly from pip by running the following command. This is not recommended when actively doing research but a great option once you release your code.
+```
+pip install git+https://github.com/safety-research/safety-tooling.git@<branch-name>#egg=safetytooling
+```
+
+### Secrets
+
+You should copy the `.env.example` file to `.env` at the root of the repository and fill in the API keys. All are optional but features that rely on them will not work if they are not set.
+```
+OPENAI_API_KEY=<your-key>
+ANTHROPIC_API_KEY=<your-key>
+HF_TOKEN=<your-key>
+GOOGLE_API_KEY=<your-key>
+GRAYSWAN_API_KEY=<your-key>
+TOGETHER_API_KEY=<your-key>
+DEEPSEEK_API_KEY=<your-key>
+ELEVENLABS_API_KEY=<your-key>
+```
+
+You can add multiple OpenAI and Anthropic API keys by adding them to the `.env` file with different names. You can then pass the `openai_tag` and `anthropic_tag` to `utils.setup_environment()` to switch between them. Alternatively, pass `openai_api_key` and `anthropic_api_key` to the InferenceAPI object directly.
+
+### Linting and formatting
+We lint our code with [Ruff](https://docs.astral.sh/ruff/) and format with black.
+This tool is automatically installed when you run set up the development environment.
+
+If you use vscode, it's recommended to install the official Ruff extension.
+
+In addition, there is a pre-commit hook that runs the linter and formatter before you commit.
+To enable it, run `make hooks` but this is optional.
 
 ### Redis Configuration (Optional)
 
@@ -39,37 +90,6 @@ Default Redis configuration if not specified:
 - No authentication
 
 You can monitor what is being read from or written to Redis by running `redis-cli` and then `MONITOR`.
-
-### Secrets
-
-You should create a file called `SECRETS` at the root of the repository
-with the following contents:
-```
-# Required
-OPENAI_API_KEY1=<your-key>
-OPENAI_API_KEY2=<your-key>
-ANTHROPIC_API_KEY=<your-key>
-RUNPOD_API_KEY=<your-key>
-HF_API_KEY=<your-key>
-GOOGLE_API_KEY=<your-key>
-GOOGLE_PROJECT_ID=<GCP-project-name>
-GOOGLE_PROJECT_REGION=<GCP-project-region>
-ELEVENLABS_API_KEY=<your-key>
-
-# Optional: Where to log prompt history by default.
-# If not set or empty, prompt history will not be logged.
-# Path should be relative to the root of the repository.
-PROMPT_HISTORY_DIR=<path-to-directory>
-```
-
-### Linting and formatting
-We lint our code with [Ruff](https://docs.astral.sh/ruff/) and format with black.
-This tool is automatically installed when you run set up the development environment.
-
-If you use vscode, it's recommended to install the official Ruff extension.
-
-In addition, there is a pre-commit hook that runs the linter and formatter before you commit.
-To enable it, run `make hooks` but this is optional.
 
 ### Testing
 Run tests as a Python module (with 6 parallel workers, and verbose output) using:
@@ -192,7 +212,7 @@ python -m safetytooling.apis.inference.usage.usage_anthropic
     - It creates the experiment directory and sets up logging to be output into log files there. It also sets random seeds and initialises the InferenceAPI so it is accessible easily by using `cfg.api`.
     - See examples of usage in the `examples` repo in next section.
 - **API KEY management**
-    - All API keys get stored in the SECRETS file (that is in the .gitignore)
+    - All API keys get stored in the .env file (that is in the .gitignore)
     - `setup_environment()` in `safetytooling/uils/utils.py` loads these in so they are accessible by the code (and also automates exporting environment variables)
 - **Utilities:**
     - Plotting functions for confusion matrices and setting up plotting in notebooks (`plotting_utils.py`)
