@@ -99,8 +99,38 @@ To check for outdated dependencies, run `pip list --outdated`.
 
 ### Running Inference
 
-* See `examples/inference_api/inference_api.ipynb` for an example of how to use the Inference API.
-* See `examples/anthropic_batch_api/run_anthropic_batch.py` for an example of how to use the Anthropic Batch API and how to set up command line input arguments using `simple_parsing` and `ExperimentConfigBase` (a useful base class we created for this project).
+Minimal example to run inference for gpt-4o-mini. See `examples/inference_api/inference_api.ipynb` to quickly run this example.
+
+```
+from safetytooling.apis import InferenceAPI
+from safetytooling.data_models import ChatMessage, MessageRole, Prompt
+from safetytooling.utils import utils
+
+utils.setup_environment()
+API = InferenceAPI(cache_dir=".cache")
+prompt = Prompt(messages=[ChatMessage(content="What is your name?", role=MessageRole.user)])
+
+response = await API(
+    model_id="gpt-4o-mini",
+    prompt=prompt,
+    print_prompt_and_response=True,
+)
+```
+
+The InferenceAPI class supports running new models when they come out without needing to update the codebase. However, you have to pass `force_provider` to the API object call. For example, if you want to run gpt-4-new-model, you can do:
+```
+response = await API(
+    model_id="gpt-4-new-model",
+    prompt=prompt,
+    force_provider="openai"
+)
+```
+Note: setup_environment() will automatically load the API keys and set the environment variables. You can set custom API keys by setting the environment variables instead of calling setup_environment(). If you have multiple API keys for OpenAI and Anthropic, you can pass openai_tag and anthropic_tag to setup_environment() to choose those to be exported.
+```
+utils.setup_environment(openai_tag="OPENAI_API_KEY_CUSTOM", anthropic_tag="ANTHROPIC_API_KEY_CUSTOM")
+```
+
+See `examples/anthropic_batch_api/run_anthropic_batch.py` for an example of how to use the Anthropic Batch API and how to set up command line input arguments using `simple_parsing` and `ExperimentConfigBase` (a useful base class we created for this project).
 
 ### Running Finetuning
 
@@ -139,7 +169,6 @@ python -m safetytooling.apis.inference.usage.usage_anthropic
         - The cache implementation is automatically selected based on the `REDIS_CACHE` environment variable.
         - **No Cache:** Set `NO_CACHE=True` as an environment variable to disable all caching. This is equivalent to setting `use_cache=False` when initialising an InferenceAPI or BatchInferenceAPI object.
     - **Prompt Logging:** For debugging, human-readable `.txt` files are can be output in `$exp_dir/prompt_history` and timestamped for easy reference (off by default). You can also pass `print_prompt_and_response` to the api object to print coloured messages to the terminal.
-    - Ability to double the rate limit if you pass a list of models e.g. `["gpt-3.5-turbo", "gpt-3.5-turbo-0613"]`
     - Manages rate limits efficiently for OpenAI bypassing the need for exponential backoff.
     - Number of concurrent threads can be customised when initialising the api object for each provider (e.g. `openai_num_threads`, `anthropic_num_threads`). Furthermore, the fraction of the OpenAI rate limit can be specified (e.g. only using 50% rate limit by setting `openai_fraction_rate_limit=0.5`.
     - When initialising the API it checks how much OpenAI rate limit is available and sets caps based on that.
