@@ -126,6 +126,9 @@ class OpenAIChatModel(OpenAIModel):
         duration = time.time() - start_time
         context_token_cost, completion_token_cost = price_per_token(model_id)
         context_cost = api_response.usage.prompt_tokens * context_token_cost
+        for choice in api_response.choices:
+            if choice.finish_reason is None:
+                choice.finish_reason = "unspecified"
         responses = [
             LLMResponse(
                 model_id=model_id,

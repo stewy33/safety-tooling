@@ -86,6 +86,7 @@ class InferenceAPI:
         vllm_base_url: str = "http://localhost:8000/v1/chat/completions",
         no_cache: bool = False,
         oai_embedding_batch_size: int = 2048,
+        always_force_provider: str | None = None,
     ):
         """
         Set prompt_history_dir to None to disable saving prompt history.
@@ -120,6 +121,7 @@ class InferenceAPI:
         self.print_prompt_and_response = print_prompt_and_response
         self.use_vllm_if_model_not_found = use_vllm_if_model_not_found
         self.vllm_base_url = vllm_base_url
+        self.always_force_provider = always_force_provider
         # can also set via env var
         if os.environ.get("SAFETYTOOLING_PRINT_PROMPTS", "false").lower() == "true":
             self.print_prompt_and_response = True
@@ -264,6 +266,9 @@ class InferenceAPI:
     def model_id_to_class(
         self, model_id: str, gemini_use_vertexai: bool = False, force_provider: str | None = None
     ) -> InferenceAPIModel:
+        if self.always_force_provider is not None:
+            force_provider = self.always_force_provider
+
         if force_provider is not None:
             assert force_provider in self.provider_to_class, f"Invalid force_provider: {force_provider}"
             if force_provider == "batch_gpu":
