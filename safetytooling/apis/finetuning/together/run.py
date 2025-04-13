@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import subprocess
 
 import simple_parsing
 import wandb
@@ -90,6 +91,8 @@ async def main(cfg: TogetherFTConfig, verbose: bool = True):
         lora_r=cfg.lora_r,
         lora_alpha=cfg.lora_alpha,
         lora_dropout=cfg.lora_dropout,
+        wandb_api_key=os.environ.get("WANDB_API_KEY"),
+        wandb_project_name=cfg.wandb_project_name,
     )
     LOGGER.info(f"Started fine-tuning job: {ft_job.id}")
 
@@ -177,6 +180,18 @@ async def main(cfg: TogetherFTConfig, verbose: bool = True):
             with open(save_config_path, "w") as f:
                 json.dump(ft_job_dict, f, indent=2)
             LOGGER.info("Config saved.")
+        
+            print("Pushing model to Hugging Face...")
+            try:
+                push_script = "/workspace/science-synth-facts/scripts/push_together_model_to_hf.sh"
+                cmd = f"bash {push_script} '{save_config_path}'"
+                result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+                print(f"Model pushed to Hugging Face successfully: {result.stdout}")
+            except subprocess.CalledProcessError as e:
+                print(e.stdout)
+                print(f"Failed to push model to Hugging Face: {e.stderr}")
+            except Exception as e:
+                print(f"Error pushing model to Hugging Face: {str(e)}")
 
     return ft_job
 

@@ -82,7 +82,7 @@ class InferenceAPI:
         anthropic_api_key: str | None = None,
         openai_api_key: str | None = None,
         print_prompt_and_response: bool = False,
-        use_vllm_if_model_not_found: bool = False,
+        use_provider_if_model_not_found: str | None = None,
         vllm_base_url: str = "http://localhost:8000/v1/chat/completions",
         no_cache: bool = False,
         oai_embedding_batch_size: int = 2048,
@@ -118,7 +118,7 @@ class InferenceAPI:
         self.n_calls = 0
         self.gpt_4o_rate_limiter = S2SRateLimiter(self.gpt4o_s2s_rpm_cap)
         self.print_prompt_and_response = print_prompt_and_response
-        self.use_vllm_if_model_not_found = use_vllm_if_model_not_found
+        self.use_provider_if_model_not_found = use_provider_if_model_not_found
         self.vllm_base_url = vllm_base_url
         # can also set via env var
         if os.environ.get("SAFETYTOOLING_PRINT_PROMPTS", "false").lower() == "true":
@@ -294,8 +294,8 @@ class InferenceAPI:
             return self._vllm
         elif model_id in DEEPSEEK_MODELS:
             return self._deepseek
-        elif self.use_vllm_if_model_not_found:
-            return self._vllm
+        elif self.use_provider_if_model_not_found is not None:
+            return self.provider_to_class[self.use_provider_if_model_not_found]
         raise ValueError(
             f"Invalid model id: {model_id}. Pass openai_completion, openai_chat, anthropic, huggingface, gemini, batch_gpu, openai_s2s, together, vllm, or deepseek to force a provider."
         )
@@ -362,7 +362,7 @@ class InferenceAPI:
         audio_out_dir: str | Path = None,
         print_prompt_and_response: bool = False,
         n: int = 1,
-        max_attempts_per_api_call: int = 10,
+        max_attempts_per_api_call: int = 40,
         num_candidates_per_completion: int = 1,
         is_valid: Callable[[str], bool] = lambda _: True,
         insufficient_valids_behaviour: Literal["error", "continue", "pad_invalids", "retry"] = "retry",
