@@ -31,6 +31,8 @@ TOGETHER_MODELS = {
     "deepseek-ai/deepseek-llm-67b-chat",
     "Qwen/Qwen2.5-72B-Instruct-Turbo",
     "Qwen/QwQ-32B-Preview",
+    # "google/gemma-3-27b-it",
+    # "Qwen/Qwen3-32B",
 }
 LOGGER = logging.getLogger(__name__)
 

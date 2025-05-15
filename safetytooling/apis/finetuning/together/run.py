@@ -5,8 +5,8 @@ import dataclasses
 import json
 import logging
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import simple_parsing
 import wandb
@@ -180,7 +180,7 @@ async def main(cfg: TogetherFTConfig, verbose: bool = True):
             with open(save_config_path, "w") as f:
                 json.dump(ft_job_dict, f, indent=2)
             LOGGER.info("Config saved.")
-        
+
             print("Pushing model to Hugging Face...")
             try:
                 push_script = "/workspace/science-synth-facts/scripts/push_together_model_to_hf.sh"
