@@ -25,10 +25,9 @@ git clone git@github.com:safety-research/safety-tooling.git
 cd safety-tooling
 ```
 
-3. Install python 3.11 and create a virtual environment.
+3. Create a virtual environment with python 3.11.
 ```
-uv python install 3.11
-uv venv
+uv venv --python=python3.11
 source .venv/bin/activate
 ```
 
@@ -120,9 +119,10 @@ Minimal example to run inference for gpt-4o-mini. See `examples/inference_api/in
 from safetytooling.apis import InferenceAPI
 from safetytooling.data_models import ChatMessage, MessageRole, Prompt
 from safetytooling.utils import utils
+from pathlib import Path
 
 utils.setup_environment()
-API = InferenceAPI(cache_dir=".cache")
+API = InferenceAPI(cache_dir=Path(".cache"))
 prompt = Prompt(messages=[ChatMessage(content="What is your name?", role=MessageRole.user)])
 
 response = await API(
@@ -146,6 +146,42 @@ utils.setup_environment(openai_tag="OPENAI_API_KEY_CUSTOM", anthropic_tag="ANTHR
 ```
 
 See `examples/anthropic_batch_api/run_anthropic_batch.py` for an example of how to use the Anthropic Batch API and how to set up command line input arguments using `simple_parsing` and `ExperimentConfigBase` (a useful base class we created for this project).
+
+If you want to use a different provider that uses an OpenAI compatible api, you can just override the `base_url` when creating an `InferenceAPI` and then doing `force_provider="openai"` when calling it. E.g.
+```
+API = InferenceAPI(cache_dir=Path(".cache"), openai_base_url="https://openrouter.ai/api/v1", openai_api_key=openrouter_api_key)
+response = await API(
+    model_id="deepseek/deepseek-v3-base:free",
+    prompt=base_prompt,
+    max_tokens=100,
+    print_prompt_and_response=True,
+    temperature=0,
+    force_provider="openai",
+)
+```
+### Deploying for inference via VLLM
+
+We make this easy to run a server locally and hook into the InferenceAPI. Here is a snippet and it is also in the `examples/inference_api/vllm_api.ipynb` notebook.
+
+```
+from safetytooling.apis import InferenceAPI
+from safetytooling.data_models import ChatMessage, MessageRole, Prompt
+from safetytooling.utils import utils
+from safetytooling.utils.vllm_utils import deploy_model_vllm_locally_auto
+
+utils.setup_environment()
+
+server = await deploy_model_vllm_locally_auto("meta-llama/Llama-3.1-8B-Instruct", max_model_len=1024, max_num_seqs=32)
+API = InferenceAPI(vllm_base_url=f"{server.base_url}/v1/chat/completions", vllm_num_threads=32, use_vllm_if_model_not_found=True)
+prompt = Prompt(messages=[ChatMessage(content="What is your name?", role=MessageRole.user)])
+
+response = await API(
+    model_id=server.model_name,
+    prompt=prompt,
+    print_prompt_and_response=True,
+)
+```
+
 
 ### Running Finetuning
 
@@ -219,3 +255,19 @@ python -m safetytooling.apis.inference.usage.usage_anthropic
     - Prompt loading with a templating library called Jinja (`prompt_utils.py`)
     - Image/audio processing (`image_utils.py` and `audio_utils.py`)
     - Human labelling framework which keeps a persistent store of human labels on disk based on the input/output pair of the LLM (`human_labeling_utils.py`)
+
+## Citation
+
+If you use this repo in your work, please cite it as follows:
+
+```bibtex
+@misc{safety_tooling_2025,
+  author       = {John Hughes and safety-research},
+  title        = {safety-research/safety-tooling: v1.0.0},
+  year         = {2025},
+  publisher    = {Zenodo},
+  version      = {v1.0.0},
+  doi          = {10.5281/zenodo.15363603},
+  url          = {https://doi.org/10.5281/zenodo.15363603}
+}
+```

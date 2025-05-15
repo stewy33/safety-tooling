@@ -1,6 +1,6 @@
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import anthropic.types
 import numpy as np
@@ -9,14 +9,24 @@ import pydantic
 from termcolor import cprint
 from typing_extensions import Self
 
-from ..utils.audio_utils import get_audio_data, prepare_audio_part, prepare_openai_s2s_audio
-from ..utils.image_utils import get_image_file_type, image_to_base64, prepare_gemini_image
+from ..utils.audio_utils import (
+    get_audio_data,
+    prepare_audio_part,
+    prepare_openai_s2s_audio,
+)
+from ..utils.image_utils import (
+    get_image_file_type,
+    image_to_base64,
+    prepare_gemini_image,
+)
+from ..utils.special_prompts import gopher_base_model_prompt
 from .hashable import HashableBaseModel
 from .inference import LLMResponse
 
 PRINT_COLORS = {
     "user": "cyan",
     "system": "magenta",
+    "developer": "magenta",
     "assistant": "light_green",
     "audio": "yellow",
     "image": "yellow",
@@ -27,11 +37,22 @@ PRINT_COLORS = {
 class MessageRole(str, Enum):
     user = "user"
     system = "system"
+    developer = "developer"
     assistant = "assistant"
     audio = "audio"
     image = "image"
     # none is designed for completion tasks where no role / tag will be added
     none = "none"
+
+
+class ChatCompletionDeepSeekAssistantMessageParam(openai.types.chat.ChatCompletionAssistantMessageParam):
+    """
+    Inherited from openai.types.chat.ChatCompletionAssistantMessageParam
+    to add prefix field for DeepSeek API
+    """
+
+    prefix: Optional[bool]
+    """Whether the message is a prefill/prefix. Specifically for DeepSeek API."""
 
 
 class ChatMessage(HashableBaseModel):
@@ -47,6 +68,14 @@ class ChatMessage(HashableBaseModel):
 
     def openai_format(self) -> openai.types.chat.ChatCompletionMessageParam:
         return {"role": self.role.value, "content": self.content}
+
+    def deepseek_format(
+        self, is_prefix: bool = False
+    ) -> Union[openai.types.chat.ChatCompletionMessageParam, ChatCompletionDeepSeekAssistantMessageParam]:
+        if is_prefix:
+            return {"role": self.role.value, "content": self.content, "prefix": True}
+        else:
+            return {"role": self.role.value, "content": self.content}
 
     def openai_image_format(self):
         # for images the format involves including images and user text in the same message
@@ -134,26 +163,47 @@ class Prompt(HashableBaseModel):
         sep: str = 8 * "=",
         strip_content: bool = False,
     ) -> Self:
-        if not text.startswith(sep):
-            return cls(
-                messages=[
-                    ChatMessage(
-                        role=MessageRole.user,
-                        content=text.strip() if strip_content else text,
-                    )
-                ]
-            )
+        import re
 
+        # Pattern to match exactly 8 = signs, followed by a role name, followed by exactly 8 = signs
+        role_pattern = rf"^{sep}([a-zA-Z]+){sep}$"
+
+        # Split text into lines
+        lines = text.split("\n")
         messages = []
-        for role_content_str in ("\n" + text).split("\n" + sep):
-            if role_content_str == "":
-                continue
+        current_role = MessageRole.user  # Default role
+        current_content = []
 
-            role, content = role_content_str.split(sep + "\n")
+        for line in lines:
+            match = re.match(role_pattern, line)
+            if match:
+                # If we have accumulated content, save it as a message if it's not empty
+                if current_content:
+                    content = "\n".join(current_content)
+                    if strip_content:
+                        content = content.strip()
+                    # Only add message if content is not empty (not just whitespace)
+                    if content.strip():
+                        messages.append(ChatMessage(role=current_role, content=content))
+                    current_content = []
+
+                # Update role for next content
+                try:
+                    current_role = MessageRole[match.group(1)]
+                except KeyError:
+                    # If role is invalid, treat this line as content with previous role
+                    current_content.append(line)
+            else:
+                current_content.append(line)
+
+        # Don't forget to add the last message if it's not empty
+        if current_content:
+            content = "\n".join(current_content)
             if strip_content:
                 content = content.strip()
-
-            messages.append(ChatMessage(role=MessageRole[role], content=content))
+            # Only add message if content is not empty (not just whitespace)
+            if content.strip():
+                messages.append(ChatMessage(role=current_role, content=content))
 
         return cls(messages=messages)
 
@@ -250,6 +300,28 @@ class Prompt(HashableBaseModel):
         if self.contains_image():
             return self.openai_image_format()
         return [msg.openai_format() for msg in self.messages]
+
+    def together_format(
+        self,
+    ) -> list[openai.types.chat.ChatCompletionMessageParam]:
+        if self.is_none_in_messages():
+            raise ValueError(f"Together chat prompts cannot have a None role. Got {self.messages}")
+        if self.contains_image():
+            return self.openai_image_format()
+        return [msg.openai_format() for msg in self.messages]
+
+    def deepseek_format(
+        self,
+    ) -> list[openai.types.chat.ChatCompletionMessageParam]:
+        if self.is_last_message_assistant():
+            return [msg.deepseek_format() for msg in self.messages[:-1]] + [
+                self.messages[-1].deepseek_format(is_prefix=True)
+            ]
+        if self.is_none_in_messages():
+            raise ValueError(f"DeepSeek chat prompts cannot have a None role. Got {self.messages}")
+        if self.contains_image():
+            return self.openai_image_format()
+        return [msg.deepseek_format() for msg in self.messages]
 
     def gemini_format(self, use_vertexai: bool = False) -> List[str]:
         if self.is_none_in_messages():
@@ -385,6 +457,25 @@ class Prompt(HashableBaseModel):
                 raise ValueError(f"Invalid role {msg.role} in prompt")
 
         return system_message, messages
+
+    def gopher_format(self) -> "Prompt":
+        """
+        Uses the prompt from this paper: https://arxiv.org/pdf/2202.03286
+        This is useful if you want to prompt base models in a chat format.
+        """
+        out = gopher_base_model_prompt
+        for msg in self.messages:
+            match msg.role:
+                case MessageRole.user:
+                    out += f"<USER>{msg.content}</USER>\n"
+                case MessageRole.assistant:
+                    out += f"<GOPHER>{msg.content}</GOPHER>\n"
+                case MessageRole.system:
+                    out += f"<SYSTEM>{msg.content}</SYSTEM>\n"
+                case _:
+                    raise ValueError(f"Invalid role {msg.role} in gopher prompt")
+        out += "<GOPHER>"
+        return Prompt(messages=[ChatMessage(role=MessageRole.none, content=out)])
 
     def pretty_print(self, responses: list[LLMResponse], print_fn: Callable | None = None) -> None:
         if print_fn is None:

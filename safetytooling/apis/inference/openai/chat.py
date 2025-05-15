@@ -3,6 +3,7 @@ import logging
 import os
 import time
 
+import httpx
 import openai
 import openai.types
 import openai.types.chat
@@ -14,13 +15,12 @@ from safetytooling.data_models import LLMResponse, Prompt
 from safetytooling.utils import math_utils
 
 from .base import OpenAIModel
-from .utils import get_rate_limit, price_per_token
+from .utils import count_tokens, get_rate_limit, price_per_token
 
 LOGGER = logging.getLogger(__name__)
 
 
 class OpenAIChatModel(OpenAIModel):
-
     @retry(stop=stop_after_attempt(8), wait=wait_fixed(2))
     async def _get_dummy_response_header(self, model_id: str):
         url = (
@@ -57,6 +57,10 @@ class OpenAIChatModel(OpenAIModel):
         BUFFER = 5  # A bit of buffer for some error margin
         MIN_NUM_TOKENS = 20
 
+        max_tokens = kwargs.get("max_completion_tokens", kwargs.get("max_tokens", 15))
+        if max_tokens is None:
+            max_tokens = 15
+
         num_tokens = 0
         for message in prompt.messages:
             num_tokens += 1
@@ -64,13 +68,16 @@ class OpenAIChatModel(OpenAIModel):
 
         return max(
             MIN_NUM_TOKENS,
-            int(num_tokens + BUFFER) + kwargs.get("n", 1) * kwargs.get("max_tokens", 15),
+            int(num_tokens + BUFFER) + kwargs.get("n", 1) * max_tokens,
         )
 
     @staticmethod
     def convert_top_logprobs(data):
         # convert OpenAI chat version of logprobs response to completion version
         top_logprobs = []
+
+        if not hasattr(data, "content") or data.content is None:
+            return []
 
         for item in data.content:
             # <|end|> is known to be duplicated on gpt-4-turbo-2024-04-09
@@ -115,22 +122,46 @@ class OpenAIChatModel(OpenAIModel):
             model=model_id,
             **kwargs,
         )
+        if hasattr(api_response, "error") and (
+            "Rate limit exceeded" in api_response.error["message"] or api_response.error["code"] == 429
+        ):  # OpenRouter routes through the error messages from the different providers, so we catch them here
+            dummy_request = httpx.Request(
+                method="POST",
+                url="https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {self.openai_api_key}"},
+                json={"messages": prompt.openai_format(), "model": model_id, **kwargs},
+            )
+            raise openai.RateLimitError(
+                api_response.error["message"],
+                response=httpx.Response(status_code=429, text=api_response.error["message"], request=dummy_request),
+                body=api_response.error,
+            )
+        if (
+            api_response.choices is None or api_response.usage.prompt_tokens == api_response.usage.total_tokens
+        ):  # this sometimes happens on OpenRouter; we want to raise an error
+            raise RuntimeError(f"No tokens were generated for {model_id}")
         api_duration = time.time() - api_start
         duration = time.time() - start_time
         context_token_cost, completion_token_cost = price_per_token(model_id)
-        context_cost = api_response.usage.prompt_tokens * context_token_cost
-        responses = [
-            LLMResponse(
-                model_id=model_id,
-                completion=choice.message.content,
-                stop_reason=choice.finish_reason,
-                api_duration=api_duration,
-                duration=duration,
-                cost=context_cost + self.count_tokens(choice.message.content) * completion_token_cost,
-                logprobs=(self.convert_top_logprobs(choice.logprobs) if choice.logprobs is not None else None),
+        if api_response.usage is not None:
+            context_cost = api_response.usage.prompt_tokens * context_token_cost
+        else:
+            context_cost = 0
+        responses = []
+        for choice in api_response.choices:
+            if choice.message.content is None or choice.finish_reason is None:
+                raise RuntimeError(f"No content or finish reason for {model_id}")
+            responses.append(
+                LLMResponse(
+                    model_id=model_id,
+                    completion=choice.message.content,
+                    stop_reason=choice.finish_reason,
+                    api_duration=api_duration,
+                    duration=duration,
+                    cost=context_cost + count_tokens(choice.message.content, model_id) * completion_token_cost,
+                    logprobs=(self.convert_top_logprobs(choice.logprobs) if choice.logprobs is not None else None),
+                )
             )
-            for choice in api_response.choices
-        ]
         self.add_response_to_prompt_file(prompt_file, responses)
         return responses
 
