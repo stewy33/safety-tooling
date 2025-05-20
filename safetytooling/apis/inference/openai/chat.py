@@ -136,10 +136,10 @@ class OpenAIChatModel(OpenAIModel):
                 response=httpx.Response(status_code=429, text=api_response.error["message"], request=dummy_request),
                 body=api_response.error,
             )
-        if (
-            api_response.choices is None or api_response.usage.prompt_tokens == api_response.usage.total_tokens
+        if api_response.choices is None or (
+            api_response.usage is None or api_response.usage.prompt_tokens == api_response.usage.total_tokens
         ):  # this sometimes happens on OpenRouter; we want to raise an error
-            raise RuntimeError(f"No tokens were generated for {model_id}")
+            raise RuntimeError(f"No tokens were generated for {model_id}, {api_response}")
         api_duration = time.time() - api_start
         duration = time.time() - start_time
         context_token_cost, completion_token_cost = price_per_token(model_id)
@@ -160,6 +160,7 @@ class OpenAIChatModel(OpenAIModel):
                     duration=duration,
                     cost=context_cost + count_tokens(choice.message.content, model_id) * completion_token_cost,
                     logprobs=(self.convert_top_logprobs(choice.logprobs) if choice.logprobs is not None else None),
+                    reasoning_content=choice.message.reasoning if hasattr(choice.message, "reasoning") else None,
                 )
             )
         self.add_response_to_prompt_file(prompt_file, responses)
