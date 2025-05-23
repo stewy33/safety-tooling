@@ -36,8 +36,6 @@ TOGETHER_MODELS = {
     "Qwen/Qwen2.5-Coder-32B-Instruct",
     "Qwen/Qwen2.5-72B-Instruct-Turbo",
     "Qwen/QwQ-32B-Preview",
-    # "google/gemma-3-27b-it",
-    # "Qwen/Qwen3-32B",
 }
 LOGGER = logging.getLogger(__name__)
 

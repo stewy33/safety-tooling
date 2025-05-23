@@ -181,18 +181,6 @@ async def main(cfg: TogetherFTConfig, verbose: bool = True):
                 json.dump(ft_job_dict, f, indent=2)
             LOGGER.info("Config saved.")
 
-            print("Pushing model to Hugging Face...")
-            try:
-                push_script = "/workspace/science-synth-facts/scripts/push_together_model_to_hf.sh"
-                cmd = f"bash {push_script} '{save_config_path}'"
-                result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
-                print(f"Model pushed to Hugging Face successfully: {result.stdout}")
-            except subprocess.CalledProcessError as e:
-                print(e.stdout)
-                print(f"Failed to push model to Hugging Face: {e.stderr}")
-            except Exception as e:
-                print(f"Error pushing model to Hugging Face: {str(e)}")
-
     return ft_job
 
 
