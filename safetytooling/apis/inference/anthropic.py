@@ -4,6 +4,7 @@ import logging
 import time
 from pathlib import Path
 from traceback import format_exc
+from typing import Callable
 
 import anthropic.types
 from anthropic import AsyncAnthropic
@@ -274,6 +275,7 @@ class AnthropicModelBatch:
         prompts: list[Prompt],
         max_tokens: int,
         log_dir: Path | None = None,
+        batch_id_callback: Callable[[str], None] | None = None,
         **kwargs,
     ) -> tuple[list[LLMResponse], str]:
         assert max_tokens is not None, "Anthropic batch API requires max_tokens to be specified"
@@ -286,6 +288,14 @@ class AnthropicModelBatch:
         requests = self.prompts_to_requests(model_id, prompts, max_tokens, **kwargs)
         batch_response = self.create_message_batch(requests=requests)
         batch_id = batch_response.id
+
+        # Invoke the callback with the batch_id
+        if batch_id_callback and batch_id:
+            try:
+                batch_id_callback(batch_id)
+            except Exception as e:
+                LOGGER.error(f"Error in batch_id_callback for batch {batch_id}: {e}")
+
         if log_dir is not None:
             log_file = log_dir / f"batch_id_{batch_id}.json"
             log_file.parent.mkdir(parents=True, exist_ok=True)

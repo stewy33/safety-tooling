@@ -84,6 +84,7 @@ async def main(cfg: TogetherFTConfig, verbose: bool = True):
         validation_file=val_file_id,
         model=cfg.model,
         n_epochs=cfg.n_epochs,
+        n_checkpoints=cfg.n_checkpoints,
         batch_size=cfg.batch_size,
         learning_rate=cfg.learning_rate,
         lora=cfg.lora,
@@ -91,6 +92,7 @@ async def main(cfg: TogetherFTConfig, verbose: bool = True):
         lora_r=cfg.lora_r,
         lora_alpha=cfg.lora_alpha,
         lora_dropout=cfg.lora_dropout,
+        lora_trainable_modules=cfg.lora_trainable_modules,
         wandb_api_key=os.environ.get("WANDB_API_KEY"),
         wandb_project_name=cfg.wandb_project_name,
     )
@@ -134,6 +136,7 @@ async def main(cfg: TogetherFTConfig, verbose: bool = True):
             )
 
     LOGGER.info("Waiting for fine-tuning job to finish...")
+    status = None
     while True:
         status = client.fine_tuning.retrieve(ft_job.id)  # https://docs.together.ai/reference/get_fine-tunes-id
         if wrun is not None:
@@ -154,7 +157,7 @@ async def main(cfg: TogetherFTConfig, verbose: bool = True):
     LOGGER.info(f"Fine-tuning job finished with id <ft_id>{ft_job.id}</ft_id>")
 
     if cfg.save_folder is not None:
-        assert ft_job.output_name is not None, "Output name is None"
+        ft_job.output_name = status.output_name
         ft_job.output_name = ft_job.output_name.replace("/", "|")
 
         if cfg.save_folder.endswith("/"):
@@ -191,7 +194,9 @@ class TogetherFTConfig(FinetuneConfig):
     lora_r: int = 8
     lora_alpha: int = 8
     lora_dropout: float = 0.0
+    lora_trainable_modules: str = "all-linear"
     suffix: str = ""  # Together suffix to append to the model name
+    n_checkpoints: int = 1
 
     save_model: bool = False
 

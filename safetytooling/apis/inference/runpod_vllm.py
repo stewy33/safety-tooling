@@ -94,6 +94,7 @@ class VLLMChatModel(InferenceAPIModel):
         print_prompt_and_response: bool,
         max_attempts: int,
         is_valid=lambda x: True,
+        logprobs: int | None = None,
         **kwargs,
     ) -> list[LLMResponse]:
         start = time.time()
@@ -108,9 +109,10 @@ class VLLMChatModel(InferenceAPIModel):
         api_duration = None
 
         kwargs["model"] = model_id
-        if "logprobs" in kwargs:
-            kwargs["top_logprobs"] = kwargs["logprobs"]
+        if logprobs is not None:
+            kwargs["top_logprobs"] = logprobs
             kwargs["logprobs"] = True
+            kwargs["prompt_logprobs"] = True
 
         for i in range(max_attempts):
             try:

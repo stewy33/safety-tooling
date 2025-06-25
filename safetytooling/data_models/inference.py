@@ -65,6 +65,7 @@ class LLMResponse(pydantic.BaseModel):
     api_failures: int | None = 0
     batch_custom_id: str | None = None
     reasoning_content: str | None = None
+    prompt_logprobs: list[dict[str, float]] | None = None
 
     model_config = pydantic.ConfigDict(protected_namespaces=())
 

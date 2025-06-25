@@ -11,25 +11,7 @@ setup=${5:-False}
 
 echo "Pushing model to Hugging Face"
 
-# ensure HF_TOKEN and TOGETHER_API_KEY are set
-if [ -z "$HF_TOKEN" ]; then
-    echo "HF_TOKEN is not set, trying to find it in safety-tooling/SECRETS"
-    HF_TOKEN=$(grep -oP 'HF_TOKEN=\K.*' safety-tooling/SECRETS)
-    if [ -z "$HF_TOKEN" ]; then
-        echo "HF_TOKEN is not set and could not be found in safety-tooling/SECRETS"
-        exit 1
-    fi
-    export HF_TOKEN=$HF_TOKEN
-fi
-if [ -z "$TOGETHER_API_KEY" ]; then
-    echo "TOGETHER_API_KEY is not set, trying to find it in safety-tooling/SECRETS"
-    TOGETHER_API_KEY=$(grep -oP 'TOGETHER_API_KEY=\K.*' safety-tooling/SECRETS)
-    if [ -z "$TOGETHER_API_KEY" ]; then
-        echo "TOGETHER_API_KEY is not set and could not be found in safety-tooling/SECRETS"
-        exit 1
-    fi
-    export TOGETHER_API_KEY=$TOGETHER_API_KEY
-fi
+source /workspace/science-synth-facts/.env
 
 if [ "$setup" = True ]; then
     sudo apt install -y zstd git-lfs
