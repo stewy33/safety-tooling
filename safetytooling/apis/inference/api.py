@@ -86,6 +86,7 @@ class InferenceAPI:
         print_prompt_and_response: bool = False,
         use_provider_if_model_not_found: str | None = None,
         vllm_base_url: str = "http://localhost:8000/v1/chat/completions",
+        vllm_api_key: str | None = None,
         no_cache: bool = False,
         oai_embedding_batch_size: int = 2048,
     ):
@@ -123,6 +124,7 @@ class InferenceAPI:
         self.print_prompt_and_response = print_prompt_and_response
         self.use_provider_if_model_not_found = use_provider_if_model_not_found
         self.vllm_base_url = vllm_base_url
+        self.vllm_api_key = vllm_api_key
         # can also set via env var
         if os.environ.get("SAFETYTOOLING_PRINT_PROMPTS", "false").lower() == "true":
             self.print_prompt_and_response = True
@@ -205,6 +207,7 @@ class InferenceAPI:
             num_threads=vllm_num_threads,
             prompt_history_dir=self.prompt_history_dir,
             vllm_base_url=self.vllm_base_url,
+            vllm_api_key=self.vllm_api_key,
         )
 
         # DeepSeek uses the OpenAI API
