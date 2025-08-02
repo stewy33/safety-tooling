@@ -4,6 +4,7 @@ import logging
 import time
 from pathlib import Path
 from traceback import format_exc
+import json
 
 import aiohttp
 
@@ -14,6 +15,8 @@ from .model import InferenceAPIModel
 
 VLLM_MODELS = {
     "dummy": "https://pod-port.proxy.runpod.net/v1/chat/completions",
+    # Examples for RunPod serverless endpoints
+    # "your-model-id": "https://api.runpod.ai/v2/{endpoint_id}/run",
     # Add more models and their endpoints as needed
 }
 
@@ -21,19 +24,30 @@ LOGGER = logging.getLogger(__name__)
 
 
 class VLLMChatModel(InferenceAPIModel):
+    @staticmethod
+    def is_runpod_serverless(url: str) -> bool:
+        """Detect if URL is RunPod serverless endpoint"""
+        return "runpod.ai" in url and ("/run" in url or url.endswith("/run"))
+    
     def __init__(
         self,
         num_threads: int,
         prompt_history_dir: Path | None = None,
         vllm_base_url: str = "http://localhost:8000/v1/chat/completions",
+        vllm_api_key: str | None = None,
     ):
         self.num_threads = num_threads
         self.prompt_history_dir = prompt_history_dir
         self.available_requests = asyncio.BoundedSemaphore(int(self.num_threads))
 
+        self.vllm_api_key = vllm_api_key
         self.headers = {"Content-Type": "application/json"}
+        if self.vllm_api_key is not None:
+            self.headers["Authorization"] = f"Bearer {self.vllm_api_key}"
+
         self.vllm_base_url = vllm_base_url
-        if self.vllm_base_url.endswith("v1"):
+        # Only add /chat/completions for standard VLLM endpoints, not RunPod serverless
+        if self.vllm_base_url.endswith("v1") and not self.is_runpod_serverless(self.vllm_base_url):
             self.vllm_base_url += "/chat/completions"
 
         self.stop_reason_map = {
@@ -52,7 +66,82 @@ class VLLMChatModel(InferenceAPIModel):
                 raise RuntimeError(f"API Error: Status {response.status}, {reason}")
             return await response.json()
 
-    async def run_query(self, model_url: str, messages: list, params: dict) -> dict:
+    def adapt_runpod_response(self, runpod_response: dict) -> dict:
+        """Convert RunPod response format to OpenAI chat completions format"""
+        # Convert to OpenAI format
+        return {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": runpod_response[0]['choices'][0]['tokens'][0]
+                },
+                "finish_reason": "stop"
+            }]
+        }
+    
+    async def run_query_serverless(self, model_url: str, messages: list, params: dict) -> dict:
+        """Handle RunPod serverless API with polling"""
+        # Convert URL to RunPod serverless format
+        if "/v1/chat/completions" in model_url:
+            submit_url = model_url.replace("/v1/chat/completions", "/run")
+            base_url = model_url.replace("/v1/chat/completions", "")
+        else:
+            submit_url = model_url if model_url.endswith("/run") else f"{model_url}/run"
+            base_url = model_url.replace("/run", "") if model_url.endswith("/run") else model_url
+        
+        # Prepare payload for RunPod serverless
+        payload = {
+            "input": {
+                "messages": messages,
+                "model": params["model"],
+                "sampling_params": {k: v for k, v in params.items() if k != "model"},
+            }
+        }
+
+        start_time = time.time()
+        max_time = 600
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(submit_url, headers=self.headers, json=payload, timeout=60) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise RuntimeError(f"Failed to submit job: Status {response.status}, {error_text}")
+                job_data = await response.json()
+            
+            job_id = job_data["id"]
+            
+            # Poll for result
+            status_url = f"{base_url}/status/{job_id}"
+            
+            while time.time() - start_time < max_time:
+                await asyncio.sleep(1)  # Poll every 1 second
+                
+                async with session.get(status_url, headers=self.headers, timeout=30) as status_response:
+                    if status_response.status != 200:
+                        error_text = await status_response.text()
+                        LOGGER.info(f"Status check failed: {error_text}")
+                        continue
+                    
+                    status_data = await status_response.json()
+                
+                status = status_data.get("status", "UNKNOWN")
+                
+                if status == "COMPLETED":
+                    output = status_data.get("output", {})
+                    return self.adapt_runpod_response(output)
+                elif status == "FAILED":
+                    error_msg = status_data.get("error", "Unknown error")
+                    raise RuntimeError(f"RunPod job failed: {error_msg}")
+                elif status in ["IN_QUEUE", "IN_PROGRESS"]:
+                    continue  # Keep polling
+                else:
+                    LOGGER.warning(f"Unknown status: {status}")
+                    continue
+            
+            raise RuntimeError(f"RunPod job timed out after {max_time} seconds")
+    
+    async def run_query_sync(self, model_url: str, messages: list, params: dict) -> dict:
+        """Handle synchronous VLLM API calls"""
         payload = {
             "model": params.get("model", "default"),
             "messages": messages,
@@ -70,6 +159,13 @@ class VLLMChatModel(InferenceAPIModel):
                 LOGGER.error(f"API Error: {reason}")
                 raise RuntimeError(f"API Error: {reason}")
             return response
+    
+    async def run_query(self, model_url: str, messages: list, params: dict) -> dict:
+        """Route to appropriate query method based on URL type"""
+        if self.is_runpod_serverless(model_url):
+            return await self.run_query_serverless(model_url, messages, params)
+        else:
+            return await self.run_query_sync(model_url, messages, params)
 
     @staticmethod
     def convert_top_logprobs(data: dict) -> list[dict]:

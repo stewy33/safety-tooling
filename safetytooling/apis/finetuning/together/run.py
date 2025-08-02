@@ -84,7 +84,7 @@ async def main(cfg: TogetherFTConfig, verbose: bool = True):
         validation_file=val_file_id,
         model=cfg.model,
         n_epochs=cfg.n_epochs,
-        n_checkpoints=cfg.n_checkpoints,
+        n_checkpoints=cfg.n_epochs,
         batch_size=cfg.batch_size,
         learning_rate=cfg.learning_rate,
         lora=cfg.lora,
@@ -196,7 +196,6 @@ class TogetherFTConfig(FinetuneConfig):
     lora_dropout: float = 0.0
     lora_trainable_modules: str = "all-linear"
     suffix: str = ""  # Together suffix to append to the model name
-    n_checkpoints: int = 1
 
     save_model: bool = False
 
